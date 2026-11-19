@@ -1,0 +1,18 @@
+[package]
+name = "test-programs"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+license = "Apache-2.0 WITH LLVM-exception"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true, features = ['std'] }
+# Guest-side bindings for the legacy WITX-based wasi-nn API.
+wasi-nn = { workspace = true }
+# Guest-side bindings for the component-model WIT-based wasi-nn API.
+wit-bindgen = { workspace = true, features = ['default'] }

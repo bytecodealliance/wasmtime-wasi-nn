@@ -15,7 +15,7 @@ pub mod wit {
 
     // Generate the wasi-nn bindings based on the `*.wit` files.
     wit_bindgen::generate!({
-        path: "../wasi-nn/wit",
+        path: "../wit",
         world: "ml",
         default_bindings_module: "test_programs::ml"
     });

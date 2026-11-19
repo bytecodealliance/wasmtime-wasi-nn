@@ -1,3 +1,47 @@
+[workspace]
+members = ["test-programs", "test-programs/artifacts"]
+
+[workspace.package]
+version = "51.0.0"
+authors = ["The Wasmtime Project Developers"]
+edition = "2024"
+# Mirrors Wasmtime's policy: no larger than current stable Rust minus 2.
+rust-version = "1.97.0"
+
+[workspace.lints.rust]
+unused_extern_crates = 'warn'
+trivial_numeric_casts = 'warn'
+unstable_features = 'warn'
+unused_import_braces = 'warn'
+
+[workspace.dependencies]
+# Wasmtime crates come from crates.io now that wasi-nn lives out-of-tree. These
+# are pinned to the release this repository was extracted from; bump them
+# together when moving to a new Wasmtime release.
+wasmtime = { version = "=51.0.0-rc.1", default-features = false }
+wasmtime-wasi = { version = "=51.0.0-rc.1", default-features = false }
+wiggle = { version = "=51.0.0-rc.1", default-features = false }
+
+tracing = { version = "0.1.41", default-features = false }
+thiserror = "2.0.17"
+walkdir = "2.5.0"
+libtest-mimic = "0.8.1"
+tracing-subscriber = { version = "0.3.20", default-features = false, features = [
+    'fmt',
+    'env-filter',
+    'ansi',
+    'tracing-log',
+] }
+anyhow = { version = "1.0.103", default-features = false }
+test-programs-artifacts = { path = 'test-programs/artifacts' }
+
+# Guest-side and componentization tooling for the test programs.
+wasi-nn = "0.6.0"
+wit-bindgen = { version = "0.63.0", default-features = false }
+wit-component = "0.263.0"
+wasi-preview1-component-adapter-provider = "50.0.1"
+heck = "0.5"
+
 [package]
 name = "wasmtime-wasi-nn"
 version.workspace = true
@@ -7,7 +51,7 @@ documentation = "https://docs.rs/wasmtime-wasi-nn"
 license = "Apache-2.0 WITH LLVM-exception"
 categories = ["wasm", "computer-vision"]
 keywords = ["webassembly", "wasm", "neural-network"]
-repository = "https://github.com/bytecodealliance/wasmtime"
+repository = "https://github.com/bytecodealliance/wasmtime-wasi-nn"
 edition.workspace = true
 rust-version.workspace = true
 
