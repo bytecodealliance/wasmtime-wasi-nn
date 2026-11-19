@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Same toolchain Wasmtime CI uses (MSRV + 2). Runner images ship different
+  # stable versions, and Rust 1.100's build-dir layout breaks the ort-sys
+  # rc.10 build script on Windows.
+  RUST_VERSION: 1.99.0
+
+jobs:
+  rustfmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install ${{ env.RUST_VERSION }} --profile minimal --component rustfmt
+      - run: rustup default ${{ env.RUST_VERSION }}
+      - run: cargo fmt --all -- --check
+
+  # Compile-only check. macOS is here rather than in `test` because the harness
+  # does not support the OpenVINO backend on macOS.
+  check:
+    name: Check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest, windows-2025]
+    steps:
+      - uses: actions/checkout@v4
+      # Needed by the `test-programs-artifacts` build script, which compiles the
+      # guest test programs to WebAssembly.
+      - run: rustup toolchain install ${{ env.RUST_VERSION }} --profile minimal --target wasm32-wasip1
+      - run: rustup default ${{ env.RUST_VERSION }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --all-targets --locked
+
+  # Mirrors the `test_wasi_nn` job Wasmtime ran before #14444. With `CI` set,
+  # the harness fails (rather than ignores) any enabled backend that cannot
+  # load, so every enabled backend must be installed below.
+  test:
+    name: Test (${{ matrix.feature }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        feature: [openvino, onnx-download]
+        os: [ubuntu-24.04, windows-2025]
+        include:
+          - os: windows-2025
+            feature: winml
+    steps:
+      - uses: actions/checkout@v4
+
+      # OpenVINO is a default feature, so it is needed on every x64 leg.
+      - uses: abrown/install-openvino-action@v12
+        if: runner.arch == 'X64'
+
+      # The Windows Server runner image lacks the desktop experience that ships
+      # WinML, so fetch the standalone library from the ONNX Runtime project.
+      - uses: nuget/setup-nuget@v2
+        if: runner.os == 'Windows' && matrix.feature == 'winml'
+      - run: nuget install Microsoft.AI.MachineLearning
+        if: runner.os == 'Windows' && matrix.feature == 'winml'
+
+      - run: rustup toolchain install ${{ env.RUST_VERSION }} --profile minimal --target wasm32-wasip1
+      - run: rustup default ${{ env.RUST_VERSION }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.feature }}
+      - run: cargo test --locked --features ${{ matrix.feature }} -- --nocapture
+        env:
+          # Avoid AMX instructions. See
+          # https://github.com/uxlfoundation/oneDNN/issues/5689
+          ONEDNN_MAX_CPU_ISA: AVX10_1_512
