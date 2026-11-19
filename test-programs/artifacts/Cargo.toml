@@ -1,0 +1,20 @@
+[package]
+name = "test-programs-artifacts"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+license = "Apache-2.0 WITH LLVM-exception"
+
+[lints]
+workspace = true
+
+[features]
+# Build the Rust test programs optimized.
+release-artifacts = []
+
+[build-dependencies]
+heck = { workspace = true }
+wit-component = { workspace = true }
+wasi-preview1-component-adapter-provider = { workspace = true }
