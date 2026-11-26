@@ -92,7 +92,7 @@ WASMTIME_LOG=ort=warn ./target/debug/wasmtime run ...
 
 ## Prerequisites for GPU(CUDA) Support
 - NVIDIA GPU with CUDA support
-- CUDA Toolkit 12.x with cuDNN 9.x
+- CUDA Toolkit 13.x with cuDNN 9.x
 - Build wasmtime with `wasmtime-wasi-nn/onnx-cuda` feature
 
 ## ONNX Runtime's Fallback Behavior
