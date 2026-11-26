@@ -13,8 +13,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   # Same toolchain Wasmtime CI uses (MSRV + 2). Runner images ship different
-  # stable versions, and Rust 1.100's build-dir layout breaks the ort-sys
-  # rc.10 build script on Windows.
+  # stable versions.
   RUST_VERSION: 1.99.0
 
 jobs:

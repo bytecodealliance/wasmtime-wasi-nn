@@ -7,24 +7,28 @@ use crate::backend::{Id, read};
 use crate::wit::types::{ExecutionTarget, GraphEncoding, Tensor, TensorType};
 use crate::{ExecutionContext, Graph};
 use ort::{
-    execution_providers::{CPUExecutionProvider, ExecutionProviderDispatch},
+    environment::Environment,
+    ep::{CPU, ExecutionProviderDispatch},
     inputs,
-    session::{Input, Output},
     session::{Session, SessionInputValue, builder::GraphOptimizationLevel},
-    tensor::TensorElementType,
-    value::{Tensor as OrtTensor, ValueType},
+    value::{Outlet, Shape as OrtShape, Tensor as OrtTensor, TensorElementType, ValueType},
 };
 
 #[cfg(feature = "onnx-cuda")]
-use ort::execution_providers::CUDAExecutionProvider;
+use ort::ep::CUDA;
 
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 
 #[derive(Default)]
 pub struct OnnxBackend();
 unsafe impl Send for OnnxBackend {}
 unsafe impl Sync for OnnxBackend {}
+
+/// The ONNX Runtime environment shared by all [`OnnxBackend`] instances,
+/// created on the first model load. `ort` allows only one per process, ever.
+static ENVIRONMENT: LazyLock<Result<Environment, ort::Error>> =
+    LazyLock::new(|| ort::init().build());
 
 impl BackendInner for OnnxBackend {
     fn encoding(&self) -> GraphEncoding {
@@ -36,10 +40,16 @@ impl BackendInner for OnnxBackend {
             return Err(BackendError::InvalidNumberOfBuilders(1, builders.len()));
         }
 
+        let environment = ENVIRONMENT.as_ref().map_err(|e| {
+            BackendError::BackendAccess(wasmtime::format_err!(
+                "failed to create the ONNX Runtime environment: {e}"
+            ))
+        })?;
+
         // Configure execution providers based on target
         let execution_providers = configure_execution_providers(target)?;
 
-        let session = Session::builder()?
+        let session = Session::builder(environment)?
             .with_execution_providers(execution_providers)?
             .with_optimization_level(GraphOptimizationLevel::Level3)?
             .commit_from_memory(builders[0])?;
@@ -62,26 +72,26 @@ fn configure_execution_providers(
         ExecutionTarget::Cpu => {
             // Use CPU execution provider with default configuration
             tracing::debug!("Using CPU execution provider");
-            Ok(vec![CPUExecutionProvider::default().build()])
+            Ok(vec![CPU::default().build()])
         }
         ExecutionTarget::Gpu => {
             #[cfg(feature = "onnx-cuda")]
             {
                 // Use CUDA execution provider for GPU acceleration
                 tracing::debug!("Using Nvidia GPU CUDA execution provider");
-                Ok(vec![CUDAExecutionProvider::default().build()])
+                Ok(vec![CUDA::default().build()])
             }
             #[cfg(not(feature = "onnx-cuda"))]
             {
                 tracing::warn!("GPU CUDA execution provider is not enabled, falling back to CPU");
-                Ok(vec![CPUExecutionProvider::default().build()])
+                Ok(vec![CPU::default().build()])
             }
         }
         ExecutionTarget::Tpu => {
             tracing::warn!(
                 "TPU execution target is not supported for ONNX backend yet, falling back to CPU"
             );
-            Ok(vec![CPUExecutionProvider::default().build()])
+            Ok(vec![CPU::default().build()])
         }
     }
 }
@@ -109,8 +119,8 @@ impl BackendGraph for OnnxGraph {
         // dimensions and type around is useful for validation but could be
         // retrieved from the session.
         let mut inputs = vec![];
-        for input in &session.inputs {
-            let shape = Shape::from_onnx_input(input)?;
+        for input in session.inputs() {
+            let shape = Shape::from_outlet(input)?;
             inputs.push(TensorSlot {
                 shape,
                 tensor: None,
@@ -119,8 +129,8 @@ impl BackendGraph for OnnxGraph {
         // We need to keep track of the output shapes since they are used for
         // creating the output tensor.
         let mut outputs = vec![];
-        for output in &session.outputs {
-            let shape = Shape::from_onnx_output(output)?;
+        for output in session.outputs() {
+            let shape = Shape::from_outlet(output)?;
             outputs.push(TensorSlot {
                 shape,
                 tensor: None,
@@ -183,7 +193,7 @@ impl BackendExecutionContext for OnnxExecutionContext {
         &mut self,
         inputs: Option<Vec<NamedTensor>>,
     ) -> Result<Option<Vec<NamedTensor>>, BackendError> {
-        fn dimensions_as_u32(shape: &ort::tensor::Shape) -> Result<Vec<u32>, BackendError> {
+        fn dimensions_as_u32(shape: &OrtShape) -> Result<Vec<u32>, BackendError> {
             (*shape)
                 .iter()
                 .map(|d| if *d == -1 { Ok(1) } else { convert_i64(d) })
@@ -239,7 +249,7 @@ impl BackendExecutionContext for OnnxExecutionContext {
                 let mut output_tensors = Vec::new();
                 for i in 0..self.outputs.len() {
                     // TODO: fix preexisting gap--this only handles f32 tensors.
-                    let (shape, data): (&ort::tensor::Shape, &[f32]) =
+                    let (shape, data): (&OrtShape, &[f32]) =
                         session_outputs[i].try_extract_tensor()?;
                     let f32s = data.to_vec();
                     let output = &mut self.outputs[i];
@@ -268,7 +278,7 @@ impl BackendExecutionContext for OnnxExecutionContext {
                 let session_outputs = session.run(session_inputs.as_slice())?;
                 for i in 0..self.outputs.len() {
                     // TODO: fix preexisting gap--this only handles f32 tensors.
-                    let (shape, data): (&ort::tensor::Shape, &[f32]) =
+                    let (shape, data): (&OrtShape, &[f32]) =
                         session_outputs[i].try_extract_tensor()?;
                     let f32s = data.to_vec();
                     let output = &mut self.outputs[i];
@@ -298,8 +308,8 @@ impl BackendExecutionContext for OnnxExecutionContext {
     }
 }
 
-impl From<ort::Error> for BackendError {
-    fn from(e: ort::Error) -> Self {
+impl<R> From<ort::Error<R>> for BackendError {
+    fn from(e: ort::Error<R>) -> Self {
         BackendError::BackendAccess(wasmtime::format_err!("{e}"))
     }
 }
@@ -321,19 +331,9 @@ struct Shape {
 }
 
 impl Shape {
-    fn from_onnx_input(input: &Input) -> Result<Self, BackendError> {
-        let name = input.name.clone();
-        let (dimensions, ty) = convert_value_type(&input.input_type)?;
-        Ok(Self {
-            name,
-            dimensions,
-            ty,
-        })
-    }
-
-    fn from_onnx_output(output: &Output) -> Result<Self, BackendError> {
-        let name = output.name.clone();
-        let (dimensions, ty) = convert_value_type(&output.output_type)?;
+    fn from_outlet(outlet: &Outlet) -> Result<Self, BackendError> {
+        let name = outlet.name().to_string();
+        let (dimensions, ty) = convert_value_type(outlet.dtype())?;
         Ok(Self {
             name,
             dimensions,

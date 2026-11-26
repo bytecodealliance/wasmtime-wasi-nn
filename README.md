@@ -133,6 +133,7 @@ Optional backends include ONNX Runtime and PyTorch:
 ```console
 cargo build --no-default-features --features onnx
 cargo build --no-default-features --features onnx-download
+cargo build --no-default-features --features onnx-pkg-config
 cargo build --no-default-features --features pytorch
 ```
 

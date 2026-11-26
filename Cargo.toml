@@ -73,8 +73,9 @@ wasmtime = { workspace = true, features = [
 tracing = { workspace = true }
 thiserror = { workspace = true }
 
-ort = { version = "2.0.0-rc.10", default-features = false, features = [
+ort = { version = "2.0.0-rc.15", default-features = false, features = [
     "copy-dylibs",
+    "std",
 ], optional = true }
 tch = { version = "0.17.0", default-features = false, optional = true}
 
@@ -111,7 +112,10 @@ openvino = ["dep:openvino"]
 # ONNX is available on all platforms.
 onnx = ["dep:ort"]
 # Use prebuilt ONNX Runtime binaries from ort.
-onnx-download = ["onnx", "ort/download-binaries"]
+onnx-download = ["onnx", "ort/download-binaries", "ort/tls-native"]
+# Find a system ONNX Runtime with pkg-config. When combined with
+# `onnx-download`, a library found this way is used instead of the download.
+onnx-pkg-config = ["onnx", "ort/pkg-config"]
 # CUDA execution provider for NVIDIA GPU support (requires CUDA toolkit)
 onnx-cuda = ["onnx", "ort/cuda"]
 # Enable tracing for ONNX Runtime
